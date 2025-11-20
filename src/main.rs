@@ -1,21 +1,34 @@
-use std::{fs::read, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs::read,
+    sync::Arc,
+};
 
 use axum::{
-    Form, Router, extract::{DefaultBodyLimit, Multipart, State}, http::StatusCode, response::{IntoResponse, Response}, routing::post
+    Form, Router,
+    extract::{DefaultBodyLimit, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::post,
 };
-use ort::{session::{Session, builder::GraphOptimizationLevel}, value::Tensor};
+use moka::future::Cache;
+use ort::{
+    session::{Session, builder::GraphOptimizationLevel},
+    value::Tensor,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tracing_subscriber::filter::LevelFilter;
 type Model = Session;
 
 #[derive(Clone)]
 struct AppState {
-    model: Arc<Mutex<Option<Arc<Model>>>>,
-    current_model_url: Arc<Mutex<Option<String>>>,
+    // As we can only run a single inference through each model, we need to mutex it
+    model_cache: Cache<String, Arc<Mutex<Session>>>,
 }
 
 static NUM_THREADS: usize = 4;
+// MAX_CACHED_MODELS needs to be > 0
+static MAX_CACHED_MODELS: u64 = 4;
 
 #[tokio::main]
 async fn main() {
@@ -23,10 +36,8 @@ async fn main() {
     tracing_subscriber::fmt()
         //.with_env_filter(LevelFilter::ERROR)
         .finish();
-    let state = AppState {
-        current_model_url: Arc::new(Mutex::new(None)),
-        model: Arc::new(Mutex::new(None)),
-    };
+    let model_cache: Cache<String, Arc<Mutex<Session>>> = Cache::new(MAX_CACHED_MODELS);
+    let state = AppState { model_cache };
     // build our application with a route
     let app = Router::new()
         // `GET /` goes to `root`
@@ -42,19 +53,52 @@ async fn main() {
 #[derive(Serialize, Deserialize)]
 struct PredictionRequest {
     input: String,
-    model_url: String
+    model_url: String,
 }
 
 #[axum::debug_handler]
-async fn handle_request(State(state): State<AppState>, Form(request): Form<PredictionRequest>) -> Response {
+async fn handle_request(
+    State(state): State<AppState>,
+    Form(request): Form<PredictionRequest>,
+) -> Response {
     println!("Received Request");
-    let model_file_name = "random_forest_heating_2h_short-term.onnx";
-    let model_file = read(format!("./resources/test_files/{}", model_file_name)).unwrap();
-    let mut model = construct_model(&model_file, GraphOptimizationLevel::Level3, 1).unwrap();
+    let model_url = request.model_url.as_str();
+    let model = state.model_cache.get(model_url).await;
+    let local_model = match model {
+        Some(model) => {
+            // Use cached model
+            model.clone()
+        }
+        None => {
+            // Model is not cached, thus download model, and store in cache
+            let client = reqwest::Client::new();
+            let res = client.get(model_url).send().await;
+            let res = match res {
+                Ok(response) => match response.bytes().await {
+                    Ok(model_file) => {
+                        construct_model(&model_file, GraphOptimizationLevel::Level3, 1)
+                    }
+                    Err(err) => {
+                        Err(err.into())
+                    },
+                },
+                Err(err) => Err(err.into()),
+            };
+            match res {
+                Ok(model) => {
+                    let model = Arc::new(Mutex::new(model));
+                    state.model_cache.insert(model_url.to_owned(), model.clone()).await;
+                    model
+                },
+                Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", err)).into_response(),
+            }
+        }
+    };
 
     let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
     let input = Tensor::from_array(([1usize, 12], input)).unwrap();
-    let res = model.run(ort::inputs![input]).unwrap();
+    let mut model_lock = local_model.lock().await;
+    let res = model_lock.run(ort::inputs![input]).unwrap();
     let res = res["variable"].try_extract_array::<f32>().unwrap()[[0, 0]];
     return (StatusCode::OK, res.to_string()).into_response();
 }
