@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fs::read, sync::Arc};
 
 use axum::{
     Router,
@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use ort::session::{Session, builder::GraphOptimizationLevel};
+use ort::{session::{Session, builder::GraphOptimizationLevel}, value::Tensor};
 use tokio::sync::Mutex;
 use tracing_subscriber::filter::LevelFilter;
 type Model = Session;
@@ -102,6 +102,7 @@ async fn handle_request(State(state): State<AppState>, mut body: Multipart) -> R
         )
             .into_response();
     }
+    /*
     let model_id = model_url.unwrap();
     let local_model;
     {
@@ -147,12 +148,20 @@ async fn handle_request(State(state): State<AppState>, mut body: Multipart) -> R
                     }
                 },
             }
+        } else {
         }
     }
+    */
+    let model_file_name = "random_forest_heating_2h_short-term.onnx";
+    let model_file = read(format!("./resources/test_files/{}", model_file_name)).unwrap();
+    let mut model = construct_model(&model_file, GraphOptimizationLevel::Level3, 1).unwrap();
 
+    let input = Tensor::from_array(([1usize, 12], input.unwrap())).unwrap();
+    let res = model.run(ort::inputs![input]).unwrap();
+    let res = res["variable"].try_extract_array::<f32>().unwrap()[[0, 0]];
     // local_model.run();
     // Once we reach here, the model id  and local model are non empty
-    return StatusCode::OK.into_response();
+    return (StatusCode::OK, res.to_string()).into_response();
 }
 
 fn construct_model(
