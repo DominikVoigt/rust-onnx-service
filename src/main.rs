@@ -24,7 +24,7 @@ static NUM_THREADS: usize = 4;
 async fn main() {
     // initialize tracing
     tracing_subscriber::fmt()
-        .with_env_filter(LevelFilter::ERROR)
+        //.with_env_filter(LevelFilter::ERROR)
         .finish();
     let state = AppState {
         current_model_url: Arc::new(Mutex::new(None)),
