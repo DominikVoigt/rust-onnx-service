@@ -1,5 +1,4 @@
 use std::{
-    collections::{HashMap, VecDeque},
     fs::read,
     sync::Arc,
 };
@@ -26,7 +25,6 @@ struct AppState {
     model_cache: Cache<String, Arc<Mutex<Session>>>,
 }
 
-static NUM_THREADS: usize = 4;
 // MAX_CACHED_MODELS needs to be > 0
 static MAX_CACHED_MODELS: u64 = 4;
 
@@ -37,6 +35,12 @@ async fn main() {
         //.with_env_filter(LevelFilter::ERROR)
         .finish();
     let model_cache: Cache<String, Arc<Mutex<Session>>> = Cache::new(MAX_CACHED_MODELS);
+    let model_file_name = "random_forest_heating_2h_short-term.onnx";
+    let level = GraphOptimizationLevel::Level2;
+    let model_file = read(format!("./resources/test_files/{}", model_file_name)).unwrap();
+    let model = construct_model(&model_file, level, 4).unwrap();
+    model_cache.insert("test.com".to_string(), Arc::new(Mutex::new(model))).await;    
+    
     let state = AppState { model_cache };
     // build our application with a route
     let app = Router::new()
@@ -95,11 +99,23 @@ async fn handle_request(
         }
     };
 
-    let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
-    let input = Tensor::from_array(([1usize, 12], input)).unwrap();
+    let input: Vec<f32> = match serde_json::from_str(&request.input) {
+        Ok(input) => input,
+        Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
+    };
+    let input = match Tensor::from_array(([1usize, 12], input)) {
+        Ok(input) => input,
+        Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
+    };
     let mut model_lock = local_model.lock().await;
-    let res = model_lock.run(ort::inputs![input]).unwrap();
-    let res = res["variable"].try_extract_array::<f32>().unwrap()[[0, 0]];
+    let res = match model_lock.run(ort::inputs![input]) {
+        Ok(out) => out,
+        Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
+    };
+    let res = match res["variable"].try_extract_array::<f32>() {
+        Ok(input) => input[[0, 0]],
+        Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
+    };
     return (StatusCode::OK, res.to_string()).into_response();
 }
 
