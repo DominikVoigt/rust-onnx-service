@@ -1,13 +1,10 @@
 use std::{fs::read, sync::Arc};
 
 use axum::{
-    Router,
-    extract::{DefaultBodyLimit, Multipart, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::post,
+    Form, Router, extract::{DefaultBodyLimit, Multipart, State}, http::StatusCode, response::{IntoResponse, Response}, routing::post
 };
 use ort::{session::{Session, builder::GraphOptimizationLevel}, value::Tensor};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing_subscriber::filter::LevelFilter;
 type Model = Session;
@@ -42,126 +39,23 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+#[derive(Serialize, Deserialize)]
+struct PredictionRequest {
+    input: String,
+    model_url: String
+}
+
 #[axum::debug_handler]
-async fn handle_request(State(state): State<AppState>, mut body: Multipart) -> Response {
+async fn handle_request(State(state): State<AppState>, Form(request): Form<PredictionRequest>) -> Response {
     println!("Received Request");
-    let mut model_url: Option<String> = None;
-    let mut model_file: Option<Vec<u8>> = None;
-    let mut input: Option<Vec<f32>> = None;
-    while let Some(field) = body.next_field().await.unwrap() {
-        let name = field.name();
-        match name {
-            Some(name) => match name {
-                "model_url" => {
-                    match field.text().await {
-                        Ok(url) => {
-                            model_url = Some(url);
-                        },
-                        Err(err) => {
-                            return (StatusCode::BAD_REQUEST, format!("Field model_url could not be parsed to valid utf-8:\n{:?}", err)).into_response()
-                        },
-                    }
-                },
-                "model_file" => {
-                    match field.bytes().await {
-                        Ok(bytes) => {
-                            model_file = Some(bytes.to_vec());
-                         },
-                        Err(err) => {
-                            println!("{:?}",err);
-                            return (StatusCode::BAD_REQUEST, format!("Model file could not be read:\n{:?}", err)).into_response()
-                        },
-                    }
-                },
-                "input" => {
-                   match field.bytes().await {
-                        Ok(input_bytes) => {
-                            input = Some(match serde_json::from_slice(&input_bytes) {
-                                                            Ok(json) => json,
-                                                            Err(err) => return (StatusCode::BAD_REQUEST, format!("Field input could not be parsed to valid f32 vector:\n{}", err)).into_response()
-                                                        });
-                        },
-                        Err(err) => {
-                            return (StatusCode::BAD_REQUEST, format!("Field input could not be read:\n{:?}", err)).into_response()
-                        },
-                    }
-                }
-                other => {
-                    return (StatusCode::BAD_REQUEST, format!("Encountered unexpected field:\n{}", other)).into_response()
-                }
-            },
-            None => return (StatusCode::BAD_REQUEST, "Multipart does not contain a name, named mulitpart fields model_url and model_file are required").into_response()
-        }
-    }
-    if input.is_none() {
-        return (StatusCode::BAD_REQUEST, "No input was provided".to_owned()).into_response();
-    }
-    if model_url.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Expected model url parameter, but was none".to_owned(),
-        )
-            .into_response();
-    }
-    /*
-    let model_id = model_url.unwrap();
-    let local_model;
-    {
-        // Check cache, and if the model is different, update
-        let mut url = state.current_model_url.lock().await;
-        if url.is_none() || url.as_ref().unwrap() != model_id.as_str() {
-            // Load new model
-            match model_file {
-                Some(model_file) => {
-                    let mut model = state.model.lock().await;
-                    *model = match construct_model(
-                        &model_file,
-                        GraphOptimizationLevel::Level3,
-                        NUM_THREADS,
-                    ) {
-                        Ok(x) => {
-                            local_model = Arc::new(x);
-                            Some(local_model.clone())
-                        }
-                        Err(err) => {
-                            return (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Encountered error creating model: {:?}", err),
-                            )
-                                .into_response();
-                        }
-                    };
-                    *url = Some(model_id);
-                }
-                None => match url.as_ref() {
-                    Some(url) => {
-                        return (StatusCode::INTERNAL_SERVER_ERROR, format!(
-                            "Model URL was different from cached model ({}), but no model file was provided",
-                            url
-                        )).into_response();
-                    }
-                    None => {
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "No model was cached and request contained no new model".to_owned(),
-                        )
-                            .into_response();
-                    }
-                },
-            }
-        } else {
-        }
-    }
-    */
     let model_file_name = "random_forest_heating_2h_short-term.onnx";
     let model_file = read(format!("./resources/test_files/{}", model_file_name)).unwrap();
     let mut model = construct_model(&model_file, GraphOptimizationLevel::Level3, 1).unwrap();
 
-    let input = Tensor::from_array(([1usize, 12], input.unwrap())).unwrap();
+    let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
+    let input = Tensor::from_array(([1usize, 12], input)).unwrap();
     let res = model.run(ort::inputs![input]).unwrap();
     let res = res["variable"].try_extract_array::<f32>().unwrap()[[0, 0]];
-    // local_model.run();
-    // Once we reach here, the model id  and local model are non empty
     return (StatusCode::OK, res.to_string()).into_response();
 }
 
