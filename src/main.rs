@@ -44,6 +44,7 @@ async fn main() {
 
 #[axum::debug_handler]
 async fn handle_request(State(state): State<AppState>, mut body: Multipart) -> Response {
+    println!("Received Request");
     let mut model_url: Option<String> = None;
     let mut model_file: Option<Vec<u8>> = None;
     let mut input: Option<Vec<f32>> = None;
