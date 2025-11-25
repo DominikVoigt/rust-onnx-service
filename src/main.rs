@@ -70,7 +70,7 @@ async fn handle_request(
     let model = state.model_cache.get(model_url).await;
     let local_model = match model {
         Some(model) => {
-            // Use cached model
+            // Acquire shared pointer to cached model (stays valid even if model is moved out of the cache during the request)
             model.clone()
         }
         None => {
