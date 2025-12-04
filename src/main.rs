@@ -1,7 +1,4 @@
-use std::{
-    fs::read,
-    sync::Arc,
-};
+use std::{fs::read, sync::Arc};
 
 use axum::{
     Form, Router,
@@ -17,6 +14,7 @@ use ort::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tracing_subscriber::EnvFilter;
 type Model = Session;
 
 #[derive(Clone)]
@@ -31,16 +29,9 @@ static MAX_CACHED_MODELS: u64 = 4;
 #[tokio::main]
 async fn main() {
     // initialize tracing
-    tracing_subscriber::fmt()
-        //.with_env_filter(LevelFilter::ERROR)
-        .finish();
+    tracing_subscriber::fmt().finish();
     let model_cache: Cache<String, Arc<Mutex<Session>>> = Cache::new(MAX_CACHED_MODELS);
-    let model_file_name = "random_forest_heating_2h_short-term.onnx";
-    let level = GraphOptimizationLevel::Level2;
-    let model_file = read(format!("./resources/test_files/{}", model_file_name)).unwrap();
-    let model = construct_model(&model_file, level, 4).unwrap();
-    model_cache.insert("test.com".to_string(), Arc::new(Mutex::new(model))).await;    
-    
+
     let state = AppState { model_cache };
     // build our application with a route
     let app = Router::new()
@@ -82,19 +73,23 @@ async fn handle_request(
                     Ok(model_file) => {
                         construct_model(&model_file, GraphOptimizationLevel::Level3, 1)
                     }
-                    Err(err) => {
-                        Err(err.into())
-                    },
+                    Err(err) => Err(err.into()),
                 },
                 Err(err) => Err(err.into()),
             };
             match res {
                 Ok(model) => {
                     let model = Arc::new(Mutex::new(model));
-                    state.model_cache.insert(model_url.to_owned(), model.clone()).await;
+                    state
+                        .model_cache
+                        .insert(model_url.to_owned(), model.clone())
+                        .await;
                     model
-                },
-                Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", err)).into_response(),
+                }
+                Err(err) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", err))
+                        .into_response();
+                }
             }
         }
     };
