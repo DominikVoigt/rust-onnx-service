@@ -1,4 +1,4 @@
-use std::{fs::read, sync::Arc};
+use std::{fs::File, io::Read, sync::Arc};
 
 use axum::{
     Form, Router,
@@ -7,6 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use clap::Parser;
+use clap_serde_derive::ClapSerde;
 use moka::future::Cache;
 use ort::{
     session::{Session, builder::GraphOptimizationLevel},
@@ -14,8 +16,18 @@ use ort::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tracing_subscriber::EnvFilter;
+use tower::{Layer, Service, ServiceBuilder};
+use tower_http::trace::{self, TraceLayer};
+use tracing::{Level, error};
 type Model = Session;
+
+#[derive(Parser)]
+#[command(name = "ONNX-Service")]
+#[command(version, about)]
+struct Configuration {
+    #[arg(long)]
+    enable_logging: bool,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -28,16 +40,49 @@ static MAX_CACHED_MODELS: u64 = 4;
 
 #[tokio::main]
 async fn main() {
-    // initialize tracing
-    tracing_subscriber::fmt().finish();
-    let model_cache: Cache<String, Arc<Mutex<Session>>> = Cache::new(MAX_CACHED_MODELS);
+    // Consider configuration file if possible
+    // In any case: Command line settings overwrite config file settings
+    let config = Configuration::parse();
+    println!("Logging is {}", config.enable_logging);
+    let service_builder = ServiceBuilder::new();
+    let trace_layer = if config.enable_logging {
+        let mut service_builder = ServiceBuilder::new();
+        let filter = tracing_subscriber::EnvFilter::new("INFO")
+            // For ort crate only log errors
+            .add_directive("ort=error".parse().unwrap());
+        // initialize tracing
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .compact()
+            .with_line_number(true)
+            .init();
 
+        Some((
+            // Map response body is required as trace layer changes response body if used within an optional layer
+            // https://github.com/tokio-rs/axum/discussions/3439
+            tower_http::map_response_body::MapResponseBodyLayer::new(axum::body::Body::new),
+            TraceLayer::new_for_http()
+                .on_request(trace::DefaultOnRequest::new().level(Level::INFO))
+                .on_response(trace::DefaultOnResponse::new().level(Level::INFO))
+                .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO)),
+        ))
+    } else {
+        None
+    };
+
+    let model_cache: Cache<String, Arc<Mutex<Session>>> = Cache::new(MAX_CACHED_MODELS);
     let state = AppState { model_cache };
+
     // build our application with a route
     let app = Router::new()
         // `GET /` goes to `root`
         .route("/", post(handle_request))
-        .layer(DefaultBodyLimit::max(1024 * 1024 * 100))
+        .layer(
+            service_builder
+                .option_layer(trace_layer)
+                .layer(DefaultBodyLimit::max(1024 * 1024 * 100)),
+        )
         .with_state(state);
 
     // run our app with hyper, listening globally on port 3000
@@ -56,7 +101,6 @@ async fn handle_request(
     State(state): State<AppState>,
     Form(request): Form<PredictionRequest>,
 ) -> Response {
-    println!("Received Request");
     let model_url = request.model_url.as_str();
     let model = state.model_cache.get(model_url).await;
     let local_model = match model {
