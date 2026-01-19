@@ -96,7 +96,7 @@ async fn handle_request(
     };
 
     let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
-    let input = Tensor::from_array(([1usize, 12], input)).unwrap();
+    let input = Tensor::from_array(([1usize, input.len()], input)).unwrap();
     let mut model_lock = local_model.lock().await;
     let res = model_lock.run(ort::inputs![input]).unwrap();
     let res = res["variable"].try_extract_array::<f32>().unwrap()[[0, 0]];
