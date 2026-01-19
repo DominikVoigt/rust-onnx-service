@@ -8,7 +8,6 @@ use axum::{
     routing::post,
 };
 use clap::Parser;
-use clap_serde_derive::ClapSerde;
 use moka::future::Cache;
 use ort::{
     session::{Session, builder::GraphOptimizationLevel},
@@ -16,7 +15,7 @@ use ort::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tower::{Layer, Service, ServiceBuilder};
+use tower::{ServiceBuilder};
 use tower_http::trace::{self, TraceLayer};
 use tracing::{Level, error};
 type Model = Session;
@@ -46,7 +45,6 @@ async fn main() {
     println!("Logging is {}", config.enable_logging);
     let service_builder = ServiceBuilder::new();
     let trace_layer = if config.enable_logging {
-        let mut service_builder = ServiceBuilder::new();
         let filter = tracing_subscriber::EnvFilter::new("INFO")
             // For ort crate only log errors
             .add_directive("ort=error".parse().unwrap());
