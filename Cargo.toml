@@ -2,6 +2,7 @@
 name = "rust-onnx"
 version = "0.1.0"
 edition = "2024"
+description = "Axum service that exposes a web API to load ONNX models and run inference on them."
 
 [dependencies]
 anyhow = "1.0.100"
@@ -15,3 +16,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 ort = "=2.0.0-rc.10"
 moka = { version = "0.12.11", features = ["future"] }
 reqwest = "0.12.24"
+tower-http = { version = "0.6.7", features = ["map-response-body", "trace"] }
+clap = { version = "4.5.53", features = ["derive"] }
+clap-serde-derive = "0.2.1"
+tower = "0.5.2"
