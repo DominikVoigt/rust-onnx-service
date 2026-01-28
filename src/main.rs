@@ -100,7 +100,6 @@ async fn handle_request(
     State(state): State<AppState>,
     Form(request): Form<PredictionRequest>,
 ) -> Response {
-    println!("Request: {:?}", request);
     let model_url = request.model_url.as_str();
     let model = state.model_cache.get(model_url).await;
     let local_model = match model {
