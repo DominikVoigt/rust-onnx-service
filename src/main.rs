@@ -88,10 +88,10 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct PredictionRequest {
-    input: Vec<f32>,
-    input_shape: Vec<usize>,
+    input: String,
+    input_shape: String,
     model_url: String,
 }
 
@@ -100,6 +100,7 @@ async fn handle_request(
     State(state): State<AppState>,
     Form(request): Form<PredictionRequest>,
 ) -> Response {
+    println!("Request: {:?}", request);
     let model_url = request.model_url.as_str();
     let model = state.model_cache.get(model_url).await;
     let local_model = match model {
@@ -137,7 +138,9 @@ async fn handle_request(
         }
     };
 
-    let input = match Tensor::from_array((request.input_shape, request.input)) {
+    let shape: Vec<usize> = serde_json::from_str(&request.input_shape).unwrap();
+    let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
+    let input = match Tensor::from_array((shape, input)) {
         Ok(input) => input,
         Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
     };
