@@ -90,7 +90,8 @@ async fn main() {
 
 #[derive(Serialize, Deserialize)]
 struct PredictionRequest {
-    input: String,
+    input: Vec<f32>,
+    input_shape: Vec<usize>,
     model_url: String,
 }
 
@@ -136,11 +137,7 @@ async fn handle_request(
         }
     };
 
-    let input: Vec<f32> = match serde_json::from_str(&request.input) {
-        Ok(input) => input,
-        Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
-    };
-    let input = match Tensor::from_array(([1usize, input.len()], input)) {
+    let input = match Tensor::from_array((request.input_shape, request.input)) {
         Ok(input) => input,
         Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
     };
