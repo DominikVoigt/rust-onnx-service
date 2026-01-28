@@ -138,7 +138,7 @@ async fn handle_request(
         }
     };
 
-    let shape: Vec<usize> = serde_json::from_str(&request.input_shape).unwrap();
+    let shape: Vec<usize> = serde_json::from_str(&request.shape).unwrap();
     let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
     let input = match Tensor::from_array((shape, input)) {
         Ok(input) => input,
