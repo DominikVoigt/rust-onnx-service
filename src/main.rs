@@ -91,7 +91,7 @@ async fn main() {
 #[derive(Serialize, Deserialize, Debug)]
 struct PredictionRequest {
     input: String,
-    input_shape: String,
+    shape: String,
     model_url: String,
 }
 
