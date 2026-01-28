@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Form, Router,
@@ -15,9 +15,9 @@ use ort::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tower::{ServiceBuilder};
+use tower::ServiceBuilder;
 use tower_http::trace::{self, TraceLayer};
-use tracing::{Level, error};
+use tracing::Level;
 type Model = Session;
 
 #[derive(Parser)]
@@ -90,8 +90,8 @@ async fn main() {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PredictionRequest {
-    input: String,
-    shape: String,
+    input: Vec<f32>,
+    shape: Vec<usize>,
     model_url: String,
 }
 
@@ -138,9 +138,7 @@ async fn handle_request(
         }
     };
 
-    let shape: Vec<usize> = serde_json::from_str(&request.shape).unwrap();
-    let input: Vec<f32> = serde_json::from_str(&request.input).unwrap();
-    let input = match Tensor::from_array((shape, input)) {
+    let input = match Tensor::from_array((request.shape, request.input)) {
         Ok(input) => input,
         Err(err) => return (StatusCode::BAD_REQUEST, format!("{:?}", err)).into_response(),
     };
