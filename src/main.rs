@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Form, Router,
@@ -8,7 +8,6 @@ use axum::{
     routing::post,
 };
 use clap::Parser;
-use clap_serde_derive::ClapSerde;
 use moka::future::Cache;
 use ort::{
     session::{Session, builder::GraphOptimizationLevel},
@@ -16,17 +15,19 @@ use ort::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tower::{Layer, Service, ServiceBuilder};
+use tower::ServiceBuilder;
 use tower_http::trace::{self, TraceLayer};
-use tracing::{Level, error};
+use tracing::Level;
 type Model = Session;
 
 #[derive(Parser)]
 #[command(name = "ONNX-Service")]
 #[command(version, about)]
-struct Configuration {
+struct Args {
     #[arg(long)]
     enable_logging: bool,
+    #[arg(short, long, default_value_t=3000)]
+    port: u16
 }
 
 #[derive(Clone)]
@@ -42,11 +43,9 @@ static MAX_CACHED_MODELS: u64 = 4;
 async fn main() {
     // Consider configuration file if possible
     // In any case: Command line settings overwrite config file settings
-    let config = Configuration::parse();
-    println!("Logging is {}", config.enable_logging);
+    let config = Args::parse();
     let service_builder = ServiceBuilder::new();
     let trace_layer = if config.enable_logging {
-        let mut service_builder = ServiceBuilder::new();
         let filter = tracing_subscriber::EnvFilter::new("INFO")
             // For ort crate only log errors
             .add_directive("ort=error".parse().unwrap());
@@ -85,8 +84,8 @@ async fn main() {
         )
         .with_state(state);
 
-    // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind(":::3000").await.unwrap();
+    println!("Serving on port {}", config.port);
+    let listener = tokio::net::TcpListener::bind(format!(":::{}", config.port)).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -113,12 +112,22 @@ async fn handle_request(
             let client = reqwest::Client::new();
             let res = client.get(model_url).send().await;
             let res = match res {
-                Ok(response) => match response.bytes().await {
-                    Ok(model_file) => {
-                        construct_model(&model_file, GraphOptimizationLevel::Level3, 1)
+                Ok(response) => {
+                    match response.error_for_status() {
+                        Ok(res) => match res.bytes().await {
+                            Ok(model_file) => {
+                                construct_model(&model_file, GraphOptimizationLevel::Level3, 1)
+                            }
+                            Err(err) => {
+                                println!("Encountered error retrieving model: {:?}", err);
+                                Err(err.into())
+                            },
+                        },
+                        Err(err) => {
+                            Err(err.into())
+                        }
                     }
-                    Err(err) => Err(err.into()),
-                },
+                }
                 Err(err) => Err(err.into()),
             };
             match res {
